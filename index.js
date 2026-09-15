@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
-const ffmpegPath = require("ffmpeg-static");
 const ytDlp = require("yt-dlp-exec");
 const fs = require("fs");
 const path = require("path");
@@ -33,11 +32,12 @@ app.post("/processAndDeployVideo", async (req, res) => {
 
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
+    
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       mergeOutputFormat: "mp4",
       output: tempFilePath,
-      ffmpegLocation: ffmpegPath,
+      cookies: "cookies.txt",
       noWarnings: true,
       forceOverwrites: true,
     });
@@ -47,12 +47,11 @@ app.post("/processAndDeployVideo", async (req, res) => {
     }
 
     console.log("Uploading MP4 to Cloudflare R2...");
-    const fileStream = fs.createReadStream(tempFilePath);
     await s3.send(
       new PutObjectCommand({
         Bucket: "zehut-media",
         Key: fileName,
-        Body: fileStream,
+        Body: fs.createReadStream(tempFilePath),
         ContentType: "video/mp4",
       })
     );
