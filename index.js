@@ -29,38 +29,44 @@ app.post("/processAndDeployVideo", async (req, res) => {
   const startSec = parseInt(start) || 0;
   const endSec = parseInt(end) || 15;
   const fileName = `${docId}.mp4`;
-  const tempFilePath = path.join(os.tmpdir(), fileName);
+  
+  // 🎯 THE DECOUPLED FILES
+  const rawFilePath = path.join(os.tmpdir(), `raw_${docId}.mp4`);
+  const finalFilePath = path.join(os.tmpdir(), fileName);
   const thumbFilePath = path.join(os.tmpdir(), `${docId}.jpg`);
 
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
+    // STEP 1: THE HEIST (Proxy is completely untouched)
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
-      
-      // 🎯 THE FIX: Exactly what Webshare provided (HTTP on Port 80)
       proxy: "http://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:80",
-      
       postprocessorArgs: [
         "-c:v", "copy",
         "-c:a", "aac",
         "-movflags", "+faststart"
       ],
-      output: tempFilePath,
+      output: rawFilePath, // <-- Save as RAW first
       noWarnings: true,
       forceOverwrites: true,
     });
 
-    if (!fs.existsSync(tempFilePath)) {
-      throw new Error("Download finished but output file not found");
+    if (!fs.existsSync(rawFilePath)) {
+      throw new Error("Download finished but raw output file not found");
     }
 
     console.log("Generating thumbnail...");
-    execSync(`ffmpeg -i "${tempFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
+    execSync(`ffmpeg -i "${rawFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
+
+    // STEP 2: THE CHOP SHOP (Crush the file size locally)
+    console.log("Compressing video size...");
+    // Forces 720p max, applies h264 compression (CRF 28), and crushes audio to mono 64k
+    execSync(`ffmpeg -i "${rawFilePath}" -vf "scale=-2:720" -c:v libx264 -crf 28 -preset faster -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
 
     console.log("Uploading JPG to Cloudflare R2...");
     await s3.send(
@@ -77,7 +83,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
       new PutObjectCommand({
         Bucket: "zehut-media",
         Key: fileName,
-        Body: fs.createReadStream(tempFilePath),
+        Body: fs.createReadStream(finalFilePath), // <-- Upload the heavily compressed file
         ContentType: "video/mp4",
       })
     );
@@ -129,12 +135,15 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
       })
     );
 
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    // CLEANUP
+    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
+    if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.json({ success: true, fileName });
   } catch (err) {
     console.error("Pipeline error:", err);
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
+    if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.status(500).json({ error: err.message || "Pipeline failed" });
   }
