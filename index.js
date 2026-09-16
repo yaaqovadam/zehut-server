@@ -42,8 +42,8 @@ app.post("/processAndDeployVideo", async (req, res) => {
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
       
-      // 🎯 THE FIX: SOCKS5 bypasses the Python HTTP authentication bug
-      proxy: "socks5://werzukfu:6e0rz03xvqbj@p.webshare.io:1080",
+      // 🎯 THE FIX: Direct Static IP and the EXACT assigned port
+      proxy: "socks5://werzukfu:6e0rz03xvqbj@31.59.20.176:6754",
       
       postprocessorArgs: [
         "-c:v", "copy",
@@ -95,11 +95,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>${title}</title>
-
-<!-- SCHEMA.ORG TAG -->
 <meta itemprop="image" content="${thumbUrl}">
-
-<!-- OPEN GRAPH / FACEBOOK / WHATSAPP TAGS -->
 <meta name="video-id" content="${docId}">
 <meta property="og:type" content="website">
 <meta property="og:url" content="${exactLink}">
@@ -108,17 +104,12 @@ app.post("/processAndDeployVideo", async (req, res) => {
 <meta property="og:image" content="${thumbUrl}">
 <meta property="og:image:secure_url" content="${thumbUrl}">
 <meta property="og:image:type" content="image/jpeg">
-
-<!-- TWITTER TAGS -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:url" content="${exactLink}">
 <meta name="twitter:title" content="${title}">
 <meta name="twitter:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">
 <meta name="twitter:image" content="${thumbUrl}">
-
-<style>
-body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #ffffff; overflow: hidden; }
-</style>
+<style>body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #ffffff; overflow: hidden; }</style>
 </head>
 <body>
 <script>
