@@ -30,7 +30,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
   const endSec = parseInt(end) || 15;
   const fileName = `${docId}.mp4`;
   
-  // 🎯 THE DECOUPLED FILES
   const rawFilePath = path.join(os.tmpdir(), `raw_${docId}.mp4`);
   const finalFilePath = path.join(os.tmpdir(), fileName);
   const thumbFilePath = path.join(os.tmpdir(), `${docId}.jpg`);
@@ -38,7 +37,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // STEP 1: THE HEIST (Proxy is completely untouched)
+    // STEP 1: THE HEIST
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -51,7 +50,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
         "-c:a", "aac",
         "-movflags", "+faststart"
       ],
-      output: rawFilePath, // <-- Save as RAW first
+      output: rawFilePath,
       noWarnings: true,
       forceOverwrites: true,
     });
@@ -63,10 +62,18 @@ app.post("/processAndDeployVideo", async (req, res) => {
     console.log("Generating thumbnail...");
     execSync(`ffmpeg -i "${rawFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
 
-    // STEP 2: THE CHOP SHOP (Crush the file size locally)
-    console.log("Compressing video size...");
-    // Forces 720p max, applies h264 compression (CRF 28), and crushes audio to mono 64k
-    execSync(`ffmpeg -i "${rawFilePath}" -vf "scale=-2:720" -c:v libx264 -crf 28 -preset faster -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
+    // STEP 2: THE CHOP SHOP (Dynamic Blur Detection)
+    console.log("Checking video dimensions...");
+    const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
+    const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
+    
+    if (vidWidth >= vidHeight) {
+      console.log(`Video is ${vidWidth}x${vidHeight} (Landscape/Square). Applying CapCut blur...`);
+      execSync(`ffmpeg -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=crop,boxblur=20:20[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a? -c:v libx264 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
+    } else {
+      console.log(`Video is ${vidWidth}x${vidHeight} (Portrait). Skipping blur, compressing directly...`);
+      execSync(`ffmpeg -i "${rawFilePath}" -vf "scale=720:-2" -c:v libx264 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
+    }
 
     console.log("Uploading JPG to Cloudflare R2...");
     await s3.send(
@@ -83,7 +90,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
       new PutObjectCommand({
         Bucket: "zehut-media",
         Key: fileName,
-        Body: fs.createReadStream(finalFilePath), // <-- Upload the heavily compressed file
+        Body: fs.createReadStream(finalFilePath),
         ContentType: "video/mp4",
       })
     );
@@ -135,7 +142,6 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
       })
     );
 
-    // CLEANUP
     if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
     if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
