@@ -35,11 +35,13 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // 🎯 MOBILE OPTIMIZATION: Force YouTube to send 720p (or lower) max
+    // 🎯 1. THE BOT BYPASS AND 720P OPTIMIZATION
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[height<=720][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
       mergeOutputFormat: "mp4",
+      extractorArgs: "youtube:player_client=android", // Bypasses the YouTube bot block
+      rmCacheDir: true,                               // Clears poisoned sessions
       postprocessorArgs: [
         "-c:v", "copy",
         "-c:a", "aac",
@@ -55,7 +57,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
     }
 
     console.log("Generating thumbnail...");
-    // 🎯 MOBILE OPTIMIZATION: Scale thumbnail to lightweight 480p width
+    // 🎯 2. THUMBNAIL COMPRESSION
     execSync(`ffmpeg -i "${tempFilePath}" -ss 00:00:01 -vframes 1 -vf "scale=854:-1" -q:v 5 "${thumbFilePath}" -y`);
 
     console.log("Uploading JPG to Cloudflare R2...");
@@ -82,7 +84,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
     const htmlFileName = `${docId}.html`;
     const exactLink = `https://gamfeiglintzadak.co.il/${htmlFileName}`;
     
-    // R2 URL for WhatsApp compatibility
+    // 🎯 3. WHATSAPP URL FIX
     const thumbUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${docId}.jpg`;
 
     const htmlContent = `<!DOCTYPE html>
