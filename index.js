@@ -42,8 +42,8 @@ app.post("/processAndDeployVideo", async (req, res) => {
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
       
-      // 🎯 THE ROTATING RESIDENTIAL BYPASS
-      proxy: "socks5://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:1080",
+      // 🎯 THE FIX: Exactly what Webshare provided (HTTP on Port 80)
+      proxy: "http://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:80",
       
       postprocessorArgs: [
         "-c:v", "copy",
