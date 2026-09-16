@@ -35,13 +35,10 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // THE MAGIC BYPASS: Android client + cache nuke
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
-      extractorArgs: "youtube:player_client=android",
-      rmCacheDir: true, 
       postprocessorArgs: [
         "-c:v", "copy",
         "-c:a", "aac",
@@ -82,7 +79,9 @@ app.post("/processAndDeployVideo", async (req, res) => {
     console.log("Uploading HTML to Cloudflare R2...");
     const htmlFileName = `${docId}.html`;
     const exactLink = `https://gamfeiglintzadak.co.il/${htmlFileName}`;
-    const thumbUrl = `https://gamfeiglintzadak.co.il/${docId}.jpg`;
+    
+    // 🎯 THE FIX: Route the thumbnail straight to the R2 bucket
+    const thumbUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${docId}.jpg`;
 
     const htmlContent = `<!DOCTYPE html>
 <html lang="he">
