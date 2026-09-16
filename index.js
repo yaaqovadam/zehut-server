@@ -42,7 +42,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
       
-      // 🎯 THE MASTER KEY: Webshare Rotating Residential SOCKS5
+      // 🎯 THE ROTATING RESIDENTIAL BYPASS
       proxy: "socks5://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:1080",
       
       postprocessorArgs: [
