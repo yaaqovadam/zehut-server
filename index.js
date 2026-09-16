@@ -27,7 +27,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
 
   const startSec = parseInt(start) || 0;
   const endSec = parseInt(end) || 15;
-  const fileName = `${docId}.mp4`;
+clear  const fileName = `${docId}.mp4`;
   const tempFilePath = path.join(os.tmpdir(), fileName);
 
   try {
