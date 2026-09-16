@@ -37,7 +37,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // STEP 1: THE HEIST
+    // STEP 1: THE HEIST (Stripped of postprocessorArgs so it doesn't crash on cuts)
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -45,34 +45,30 @@ app.post("/processAndDeployVideo", async (req, res) => {
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
       proxy: "http://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:80",
-      postprocessorArgs: [
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-movflags", "+faststart"
-      ],
       output: rawFilePath,
       noWarnings: true,
       forceOverwrites: true,
     });
 
-    if (!fs.existsSync(rawFilePath)) {
-      throw new Error("Download finished but raw output video not found");
+    // 🎯 Bulletproof check: If the file doesn't exist or is an empty shell (< 1000 bytes)
+    if (!fs.existsSync(rawFilePath) || fs.statSync(rawFilePath).size < 1000) {
+      throw new Error("YouTube blocking or download failed: Resulting file is empty or corrupted.");
     }
 
     console.log("Generating thumbnail...");
-    execSync(`ffmpeg -y -i "${rawFilePath}" -ss 00:00:00 -frames:v 1 -update 1 "${thumbFilePath}"`, { stdio: 'inherit' });
+    execSync(`ffmpeg -y -i "${rawFilePath}" -vframes 1 "${thumbFilePath}"`, { stdio: 'inherit' });
 
-    // STEP 2: THE CHOP SHOP (🎯 Forced setsar=1 to satisfy strict iOS web players)
+    // STEP 2: THE CHOP SHOP (Where all the Baseline & setsar=1 Apple magic actually happens)
     console.log("Checking video dimensions...");
     const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
     const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
     
     if (vidWidth >= vidHeight) {
-      console.log(`Video is Landscape. Applying blur and setsar=1...`);
-      execSync(`ffmpeg -y -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[outv]" -map "[outv]" -map 0:a? -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
+      console.log(`Video is Landscape. Applying blur, setsar=1, and Baseline profile...`);
+      execSync(`ffmpeg -y -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[outv]" -map "[outv]" -map 0:a:0? -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
     } else {
-      console.log(`Video is Portrait. Compressing directly with setsar=1...`);
-      execSync(`ffmpeg -y -i "${rawFilePath}" -vf "scale=720:-2,setsar=1" -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
+      console.log(`Video is Portrait. Compressing directly with setsar=1 and Baseline profile...`);
+      execSync(`ffmpeg -y -i "${rawFilePath}" -vf "scale=720:-2,setsar=1" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
     }
 
     console.log("Uploading JPG to Cloudflare R2...");
@@ -157,4 +153,4 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-// setsar=1 Apple fix 1789570370
+// Fix raw file corruption 1789576202
