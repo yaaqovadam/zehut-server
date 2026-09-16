@@ -42,8 +42,8 @@ app.post("/processAndDeployVideo", async (req, res) => {
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
       
-      // 🎯 THE FIX: Direct Static IP and the EXACT assigned port
-      proxy: "socks5://werzukfu:6e0rz03xvqbj@31.59.20.176:6754",
+      // 🎯 THE MASTER KEY: Webshare Rotating Residential SOCKS5
+      proxy: "socks5://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:1080",
       
       postprocessorArgs: [
         "-c:v", "copy",
