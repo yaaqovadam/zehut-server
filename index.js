@@ -62,17 +62,17 @@ app.post("/processAndDeployVideo", async (req, res) => {
     console.log("Generating thumbnail...");
     execSync(`ffmpeg -y -i "${rawFilePath}" -ss 00:00:00 -frames:v 1 -update 1 "${thumbFilePath}"`, { stdio: 'inherit' });
 
-    // STEP 2: THE CHOP SHOP (🎯 Forced Baseline profile and restricted to 1 primary audio track)
+    // STEP 2: THE CHOP SHOP (🎯 Forced setsar=1 to satisfy strict iOS web players)
     console.log("Checking video dimensions...");
     const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
     const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
     
     if (vidWidth >= vidHeight) {
-      console.log(`Video is Landscape/Square. Applying 12:12 blur...`);
-      execSync(`ffmpeg -y -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a:0? -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
+      console.log(`Video is Landscape. Applying blur and setsar=1...`);
+      execSync(`ffmpeg -y -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[outv]" -map "[outv]" -map 0:a? -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
     } else {
-      console.log(`Video is Portrait. Compressing directly...`);
-      execSync(`ffmpeg -y -i "${rawFilePath}" -vf "scale=720:-2" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
+      console.log(`Video is Portrait. Compressing directly with setsar=1...`);
+      execSync(`ffmpeg -y -i "${rawFilePath}" -vf "scale=720:-2,setsar=1" -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
     }
 
     console.log("Uploading JPG to Cloudflare R2...");
@@ -157,4 +157,4 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-// Baseline Web Fix 1789567211
+// setsar=1 Apple fix 1789570370
