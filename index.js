@@ -60,7 +60,8 @@ app.post("/processAndDeployVideo", async (req, res) => {
     }
 
     console.log("Generating thumbnail...");
-    execSync(`ffmpeg -i "${rawFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
+    // 🎯 THE FIX: Added -frames:v 1 -update 1 to satisfy FFmpeg 9.0 requirements
+    execSync(`ffmpeg -i "${rawFilePath}" -ss 00:00:01 -frames:v 1 -update 1 "${thumbFilePath}" -y`);
 
     // STEP 2: THE CHOP SHOP (12:12 Dynamic Blur + iOS Compatibility)
     console.log("Checking video dimensions...");
@@ -157,4 +158,3 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-// Force GitHub deployment ping 1789560713
