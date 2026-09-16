@@ -37,13 +37,21 @@ app.post("/processAndDeployVideo", async (req, res) => {
 
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
+      // Force YouTube to send 720p or lower
       format: "bestvideo[height<=720][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
       mergeOutputFormat: "mp4",
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
+      
+      // 🎯 THE COMPRESSION TWEAKS
       postprocessorArgs: [
-        "-c:v", "copy",
-        "-c:a", "aac",
+        "-c:v", "libx264",      // Actively compress the video
+        "-crf", "28",           // Aggressive but visually clean compression
+        "-preset", "faster",    // Keep Railway CPU processing fast
+        "-r", "30",             // Cap framerate at 30fps
+        "-c:a", "aac",          // Audio codec
+        "-b:a", "64k",          // Crush audio bitrate to 64kbps
+        "-ac", "1",             // Force mono audio (perfect for speech)
         "-movflags", "+faststart"
       ],
       output: tempFilePath,
@@ -83,7 +91,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
     const exactLink = `https://gamfeiglintzadak.co.il/${htmlFileName}`;
     const thumbUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${docId}.jpg`;
 
-    // 🎯 THE FIX: Exactly matching your working Firebase meta tag structure
     const htmlContent = `<!DOCTYPE html>
 <html lang="he">
 <head>
