@@ -39,13 +39,13 @@ app.post("/processAndDeployVideo", async (req, res) => {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
+      extractorArgs: "youtube:player_client=ios",
       postprocessorArgs: [
         "-c:v", "copy",
         "-c:a", "aac",
         "-movflags", "+faststart"
       ],
       output: tempFilePath,
-      cookies: "cookies.txt",
       noWarnings: true,
       forceOverwrites: true,
     });
@@ -79,8 +79,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
 
     console.log("Uploading HTML to Cloudflare R2...");
     const htmlFileName = `${docId}.html`;
-    
-    // FIX: Both exactLink and thumbUrl use the clean domain now
     const exactLink = `https://gamfeiglintzadak.co.il/${htmlFileName}`;
     const thumbUrl = `https://gamfeiglintzadak.co.il/${docId}.jpg`;
 
