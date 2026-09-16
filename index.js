@@ -60,20 +60,20 @@ app.post("/processAndDeployVideo", async (req, res) => {
     }
 
     console.log("Generating thumbnail...");
-    // 🎯 THE FIX: Added -frames:v 1 -update 1 to satisfy FFmpeg 9.0 requirements
-    execSync(`ffmpeg -i "${rawFilePath}" -ss 00:00:01 -frames:v 1 -update 1 "${thumbFilePath}" -y`);
+    execSync(`ffmpeg -y -i "${rawFilePath}" -ss 00:00:01 -frames:v 1 -update 1 "${thumbFilePath}"`, { stdio: 'inherit' });
 
-    // STEP 2: THE CHOP SHOP (12:12 Dynamic Blur + iOS Compatibility)
+    // STEP 2: THE CHOP SHOP
     console.log("Checking video dimensions...");
     const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
     const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
     
     if (vidWidth >= vidHeight) {
       console.log(`Video is ${vidWidth}x${vidHeight} (Landscape/Square). Applying 12:12 blur...`);
-      execSync(`ffmpeg -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a? -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
+      // 🎯 THE FIX: Added { stdio: 'inherit' } to bypass Node's memory limit and prevent silent freezing
+      execSync(`ffmpeg -y -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a? -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
     } else {
       console.log(`Video is ${vidWidth}x${vidHeight} (Portrait). Skipping blur, compressing directly...`);
-      execSync(`ffmpeg -i "${rawFilePath}" -vf "scale=720:-2" -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
+      execSync(`ffmpeg -y -i "${rawFilePath}" -vf "scale=720:-2" -c:v libx264 -pix_fmt yuv420p -profile:v main -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}"`, { stdio: 'inherit' });
     }
 
     console.log("Uploading JPG to Cloudflare R2...");
