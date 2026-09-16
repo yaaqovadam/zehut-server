@@ -62,14 +62,15 @@ app.post("/processAndDeployVideo", async (req, res) => {
     console.log("Generating thumbnail...");
     execSync(`ffmpeg -i "${rawFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
 
-    // STEP 2: THE CHOP SHOP (Dynamic Blur Detection)
+    // STEP 2: THE CHOP SHOP (Dynamic Blur Detection with CORRECTED syntax)
     console.log("Checking video dimensions...");
     const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
     const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
     
     if (vidWidth >= vidHeight) {
       console.log(`Video is ${vidWidth}x${vidHeight} (Landscape/Square). Applying CapCut blur...`);
-      execSync(`ffmpeg -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=crop,boxblur=20:20[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a? -c:v libx264 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
+      // 🎯 THE FIX: use force_original_aspect_ratio=increase, followed by a separate crop=720:1280
+      execSync(`ffmpeg -i "${rawFilePath}" -filter_complex "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=20:20[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]" -map "[outv]" -map 0:a? -c:v libx264 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
     } else {
       console.log(`Video is ${vidWidth}x${vidHeight} (Portrait). Skipping blur, compressing directly...`);
       execSync(`ffmpeg -i "${rawFilePath}" -vf "scale=720:-2" -c:v libx264 -crf 30 -preset fast -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
