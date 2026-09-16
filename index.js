@@ -35,13 +35,16 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // THE BASELINE: Android client, no extra compression, direct copy
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
+      
+      // 🎯 THE SILVER BULLET: Your exact Webshare proxy
+      proxy: "http://werzukfu:6e0rz03xvqbj@p.webshare.io:80",
+      
       postprocessorArgs: [
         "-c:v", "copy",
         "-c:a", "aac",
