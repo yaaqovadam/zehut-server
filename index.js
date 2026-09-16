@@ -37,7 +37,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // STEP 1a: THE VIDEO HEIST (Bulletproof)
+    // STEP 1a: THE VIDEO HEIST 
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -65,7 +65,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
       await ytDlp(url, {
         writeAutoSubs: true,
         subLangs: "en",
-        skipDownload: true, // Only download the text file
+        skipDownload: true, 
         proxy: "http://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:80",
         output: path.join(os.tmpdir(), `raw_${docId}`),
         noWarnings: true,
@@ -74,7 +74,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
       console.log("YouTube rate-limited the subtitle API (HTTP 429). Surviving and proceeding without text...");
     }
 
-    // Locate the subtitle file if we successfully grabbed it
     const vttFilePath = path.join(os.tmpdir(), `raw_${docId}.en.vtt`);
     const srtFilePath = path.join(os.tmpdir(), `raw_${docId}.en.srt`);
     const subFilePath = fs.existsSync(vttFilePath) ? vttFilePath : (fs.existsSync(srtFilePath) ? srtFilePath : null);
@@ -84,7 +83,8 @@ app.post("/processAndDeployVideo", async (req, res) => {
     else console.log("Proceeding to processing without subtitles.");
 
     console.log("Generating thumbnail...");
-    execSync(`ffmpeg -y -i "${rawFilePath}" -ss 00:00:01 -frames:v 1 -update 1 "${thumbFilePath}"`, { stdio: 'inherit' });
+    // 🎯 THE FIX: Changed -ss 00:00:01 to 00:00:00 to prevent crashing on 1-second clips
+    execSync(`ffmpeg -y -i "${rawFilePath}" -ss 00:00:00 -frames:v 1 -update 1 "${thumbFilePath}"`, { stdio: 'inherit' });
 
     // STEP 2: THE CHOP SHOP (Dynamic Filter Graph)
     console.log("Checking video dimensions...");
@@ -96,7 +96,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
       
       let filter = `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`;
       
-      // If we got subs, layer them over the blur, ~15px below the video frame
       if (hasSubs) {
         filter += `[v1];[v1]subtitles='${subFilePath}':force_style='Fontname=Arial,Fontsize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=2,MarginV=420,Alignment=2'`;
       }
@@ -181,7 +180,6 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
       })
     );
 
-    // Deep clean all temp files
     if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
     if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
@@ -204,4 +202,4 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-// Decouple subs ping 1789562195
+// 1-second clip fix 1789562894
