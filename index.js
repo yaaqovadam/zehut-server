@@ -42,8 +42,8 @@ app.post("/processAndDeployVideo", async (req, res) => {
       extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
       
-      // 🎯 THE SILVER BULLET: Your exact Webshare proxy
-      proxy: "http://werzukfu:6e0rz03xvqbj@p.webshare.io:80",
+      // 🎯 THE FIX: SOCKS5 bypasses the Python HTTP authentication bug
+      proxy: "socks5://werzukfu:6e0rz03xvqbj@p.webshare.io:1080",
       
       postprocessorArgs: [
         "-c:v", "copy",
