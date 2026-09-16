@@ -35,11 +35,13 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
+    // THE MAGIC BYPASS: Android client + cache nuke
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
-      extractorArgs: "youtube:player_client=ios",
+      extractorArgs: "youtube:player_client=android",
+      rmCacheDir: true, 
       postprocessorArgs: [
         "-c:v", "copy",
         "-c:a", "aac",
