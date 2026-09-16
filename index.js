@@ -37,7 +37,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // STEP 1: THE HEIST (Now with Subtitle Extraction)
+    // STEP 1a: THE VIDEO HEIST (Bulletproof)
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -53,38 +53,50 @@ app.post("/processAndDeployVideo", async (req, res) => {
       output: rawFilePath,
       noWarnings: true,
       forceOverwrites: true,
-      writeAutoSubs: true, // Pulls the YouTube auto-captions
-      subLangs: "en",      // Specifically requests English
     });
 
     if (!fs.existsSync(rawFilePath)) {
-      throw new Error("Download finished but raw output file not found");
+      throw new Error("Download finished but raw output video not found");
     }
 
-    // Locate the downloaded subtitle file (yt-dlp usually saves as .vtt or .srt)
+    // STEP 1b: THE SUBTITLE STEALTH MISSION
+    try {
+      console.log("Attempting to steal English subtitles...");
+      await ytDlp(url, {
+        writeAutoSubs: true,
+        subLangs: "en",
+        skipDownload: true, // Only download the text file
+        proxy: "http://werzukfu-rotate:6e0rz03xvqbj@p.webshare.io:80",
+        output: path.join(os.tmpdir(), `raw_${docId}`),
+        noWarnings: true,
+      });
+    } catch (subErr) {
+      console.log("YouTube rate-limited the subtitle API (HTTP 429). Surviving and proceeding without text...");
+    }
+
+    // Locate the subtitle file if we successfully grabbed it
     const vttFilePath = path.join(os.tmpdir(), `raw_${docId}.en.vtt`);
     const srtFilePath = path.join(os.tmpdir(), `raw_${docId}.en.srt`);
     const subFilePath = fs.existsSync(vttFilePath) ? vttFilePath : (fs.existsSync(srtFilePath) ? srtFilePath : null);
     const hasSubs = subFilePath !== null;
     
-    if (hasSubs) console.log(`English subtitles found and locked in: ${subFilePath}`);
-    else console.log("No English auto-subs found for this clip, proceeding without text.");
+    if (hasSubs) console.log(`English subtitles locked in: ${subFilePath}`);
+    else console.log("Proceeding to processing without subtitles.");
 
     console.log("Generating thumbnail...");
     execSync(`ffmpeg -y -i "${rawFilePath}" -ss 00:00:01 -frames:v 1 -update 1 "${thumbFilePath}"`, { stdio: 'inherit' });
 
-    // STEP 2: THE CHOP SHOP (Dynamic Filter Graph for Subtitles)
+    // STEP 2: THE CHOP SHOP (Dynamic Filter Graph)
     console.log("Checking video dimensions...");
     const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
     const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
     
     if (vidWidth >= vidHeight) {
-      console.log(`Video is Landscape. Applying 12:12 blur and formatting...`);
+      console.log(`Video is Landscape. Applying 12:12 blur...`);
       
-      // Build the base blur layout
       let filter = `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=12:12[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`;
       
-      // If subs exist, chain them over the blurred layout, ~15px below the video
+      // If we got subs, layer them over the blur, ~15px below the video frame
       if (hasSubs) {
         filter += `[v1];[v1]subtitles='${subFilePath}':force_style='Fontname=Arial,Fontsize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=2,MarginV=420,Alignment=2'`;
       }
@@ -95,7 +107,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
       console.log(`Video is Portrait. Compressing directly...`);
       
       let filter = `scale=720:-2`;
-      // If portrait, push the subs down to the very bottom of the screen
       if (hasSubs) {
         filter += `,subtitles='${subFilePath}':force_style='Fontname=Arial,Fontsize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1,Shadow=2,MarginV=60,Alignment=2'`;
       }
@@ -182,7 +193,6 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
     if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
     if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
-    // Use a try-catch for the dynamic sub variable in error handling
     try { 
       const errSubPath = path.join(os.tmpdir(), `raw_${docId}.en.vtt`);
       if (fs.existsSync(errSubPath)) fs.unlinkSync(errSubPath);
@@ -194,4 +204,4 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-// Subtitle ping 1789561665
+// Decouple subs ping 1789562195
