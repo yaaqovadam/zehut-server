@@ -29,35 +29,35 @@ app.post("/processAndDeployVideo", async (req, res) => {
   const startSec = parseInt(start) || 0;
   const endSec = parseInt(end) || 15;
   const fileName = `${docId}.mp4`;
-  const rawFilePath = path.join(os.tmpdir(), `raw_${fileName}`);
-  const finalFilePath = path.join(os.tmpdir(), fileName);
+  const tempFilePath = path.join(os.tmpdir(), fileName);
   const thumbFilePath = path.join(os.tmpdir(), `${docId}.jpg`);
 
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // 🎯 STEP 1: DUMB, FAST DOWNLOAD (Under the radar)
+    // THE BASELINE: Android client, no extra compression, direct copy
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
-      extractorArgs: "youtube:player_client=android", // The proven winner
+      extractorArgs: "youtube:player_client=android",
       rmCacheDir: true,
-      output: rawFilePath,
+      postprocessorArgs: [
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-movflags", "+faststart"
+      ],
+      output: tempFilePath,
       noWarnings: true,
       forceOverwrites: true,
     });
 
-    if (!fs.existsSync(rawFilePath)) {
-      throw new Error("Raw download finished but output file not found");
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error("Download finished but output file not found");
     }
 
-    console.log("Compressing and scaling to 720p via FFmpeg...");
-    // 🎯 STEP 2: STANDALONE COMPRESSION (No YouTube API calls)
-    execSync(`ffmpeg -i "${rawFilePath}" -vf "scale=-2:720" -c:v libx264 -crf 28 -preset faster -r 30 -c:a aac -b:a 64k -ac 1 -movflags +faststart "${finalFilePath}" -y`);
-
     console.log("Generating thumbnail...");
-    execSync(`ffmpeg -i "${finalFilePath}" -ss 00:00:01 -vframes 1 -vf "scale=854:-1" -q:v 5 "${thumbFilePath}" -y`);
+    execSync(`ffmpeg -i "${tempFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
 
     console.log("Uploading JPG to Cloudflare R2...");
     await s3.send(
@@ -74,7 +74,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
       new PutObjectCommand({
         Bucket: "zehut-media",
         Key: fileName,
-        Body: fs.createReadStream(finalFilePath),
+        Body: fs.createReadStream(tempFilePath),
         ContentType: "video/mp4",
       })
     );
@@ -135,14 +135,12 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
       })
     );
 
-    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
-    if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.json({ success: true, fileName });
   } catch (err) {
     console.error("Pipeline error:", err);
-    if (fs.existsSync(rawFilePath)) fs.unlinkSync(rawFilePath);
-    if (fs.existsSync(finalFilePath)) fs.unlinkSync(finalFilePath);
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.status(500).json({ error: err.message || "Pipeline failed" });
   }
