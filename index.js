@@ -151,6 +151,39 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
   }
 });
 
+app.post("/generateMissingWaveform", async (req, res) => {
+  const { url, docId } = req.body;
+  if (!url || !docId) {
+    return res.status(400).json({ error: "Missing url or docId." });
+  }
+
+  const waveFilePath = path.join(os.tmpdir(), `${docId}_wave.png`);
+
+  try {
+    console.log(`Generating waveform for ${docId}...`);
+
+    // FFmpeg streams the audio directly from your R2 URL to draw the picture
+    execSync(`ffmpeg -y -i "${url}" -filter_complex "aformat=channel_layouts=mono,compand,showwavespic=s=2000x250:colors=white" -frames:v 1 "${waveFilePath}"`, { stdio: 'inherit' });
+
+    console.log("Uploading Waveform to Cloudflare R2...");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "zehut-media",
+        Key: `${docId}_wave.png`,
+        Body: fs.createReadStream(waveFilePath),
+        ContentType: "image/png",
+      })
+    );
+
+    if (fs.existsSync(waveFilePath)) fs.unlinkSync(waveFilePath);
+    return res.json({ success: true, waveUrl: `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${docId}_wave.png` });
+  } catch (err) {
+    console.error("Waveform generation error:", err);
+    if (fs.existsSync(waveFilePath)) fs.unlinkSync(waveFilePath);
+    return res.status(500).json({ error: err.message || "Waveform generation failed" });
+  }
+});
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
 // Fix raw file corruption 1789576202
