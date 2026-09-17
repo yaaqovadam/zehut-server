@@ -6,6 +6,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleAIFileManager } = require("@google/generative-ai/server");
 
 const app = express();
 app.use(cors());
@@ -37,7 +39,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
 
-    // STEP 1: THE HEIST (Stripped of postprocessorArgs so it doesn't crash on cuts)
+    // STEP 1: THE HEIST
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -50,7 +52,6 @@ app.post("/processAndDeployVideo", async (req, res) => {
       forceOverwrites: true,
     });
 
-    // 🎯 Bulletproof check: If the file doesn't exist or is an empty shell (< 1000 bytes)
     if (!fs.existsSync(rawFilePath) || fs.statSync(rawFilePath).size < 1000) {
       throw new Error("YouTube blocking or download failed: Resulting file is empty or corrupted.");
     }
@@ -58,7 +59,7 @@ app.post("/processAndDeployVideo", async (req, res) => {
     console.log("Generating thumbnail...");
     execSync(`ffmpeg -y -i "${rawFilePath}" -vframes 1 "${thumbFilePath}"`, { stdio: 'inherit' });
 
-    // STEP 2: THE CHOP SHOP (Where all the Baseline & setsar=1 Apple magic actually happens)
+    // STEP 2: THE CHOP SHOP
     console.log("Checking video dimensions...");
     const dimensions = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${rawFilePath}"`).toString().trim();
     const [vidWidth, vidHeight] = dimensions.split('x').map(Number);
@@ -161,8 +162,6 @@ app.post("/generateMissingWaveform", async (req, res) => {
 
   try {
     console.log(`Generating waveform for ${docId}...`);
-
-    // FFmpeg streams the audio directly from your R2 URL to draw the picture
     execSync(`ffmpeg -y -i "${url}" -filter_complex "aformat=channel_layouts=mono,compand,showwavespic=s=2000x250:colors=white" -frames:v 1 "${waveFilePath}"`, { stdio: 'inherit' });
 
     console.log("Uploading Waveform to Cloudflare R2...");
@@ -184,6 +183,54 @@ app.post("/generateMissingWaveform", async (req, res) => {
   }
 });
 
+app.post("/transcribe", async (req, res) => {
+  const { url, docId } = req.body;
+  if (!url || !docId) {
+    return res.status(400).json({ error: "Missing video url or docId." });
+  }
+
+  const audioPath = path.join(os.tmpdir(), `${docId}_audio.mp3`);
+
+  try {
+    console.log(`Extracting audio for ${docId}...`);
+    execSync(`ffmpeg -y -i "${url}" -vn -acodec libmp3lame -ac 1 -ab 32k "${audioPath}"`, { stdio: 'inherit' });
+
+    console.log("Uploading audio to Gemini...");
+    const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
+    const uploadResult = await fileManager.uploadFile(audioPath, {
+      mimeType: "audio/mp3",
+      displayName: docId,
+    });
+
+    console.log("Generating transcript and translation...");
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+    
+    const prompt = `You are a professional audio transcriber and translator. Listen to this audio track. 
+    Return a valid JSON object with exactly two keys: "en" and "he". 
+    "en" must be the exact English transcription of the spoken audio.
+    "he" must be the fluent, accurate Hebrew translation for an Israeli audience.
+    Do NOT wrap the output in markdown code blocks. Return ONLY the raw JSON string.`;
+
+    const result = await model.generateContent([
+      { fileData: { mimeType: uploadResult.file.mimeType, fileUri: uploadResult.file.uri } },
+      { text: prompt }
+    ]);
+
+    let responseText = result.response.text().trim();
+    responseText = responseText.replace(/^```(json)?/, '').replace(/```$/, '').trim();
+    const parsedJson = JSON.parse(responseText);
+
+    await fileManager.deleteFile(uploadResult.file.name);
+    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+
+    return res.json({ success: true, data: parsedJson });
+  } catch (err) {
+    console.error("Transcription error:", err);
+    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+    return res.status(500).json({ error: err.message || "Transcription failed" });
+  }
+});
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-// Fix raw file corruption 1789576202
