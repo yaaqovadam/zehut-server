@@ -204,7 +204,7 @@ app.post("/transcribe", async (req, res) => {
 
     console.log("Generating transcript and translation...");
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" }); 
+    const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" }); 
     
     const prompt = `You are a professional audio transcriber and translator. Listen to this audio track. 
     Return a valid JSON object with exactly two keys: "en" and "he". 
