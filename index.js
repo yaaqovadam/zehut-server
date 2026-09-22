@@ -6,6 +6,10 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
+const admin = require("firebase-admin"); // 🚨 REQUIRED FOR FIREBASE
+
+// 🚨 INITIALIZE FIREBASE ADMIN
+admin.initializeApp();
 
 const app = express();
 app.use(cors());
@@ -22,8 +26,10 @@ const s3 = new S3Client({
 
 app.post("/processAndDeployVideo", async (req, res) => {
   const { url, start, end, title, docId } = req.body;
-  if (!url || !docId || !title) return res.status(400).json({ error: "Missing required fields." });
-  
+  if (!url || !docId || !title) {
+    return res.status(400).json({ error: "Missing required fields." });
+  }
+
   const startSec = parseInt(start) || 0;
   const endSec = parseInt(end) || 15;
   const fileName = `${docId}.mp4`;
@@ -32,33 +38,101 @@ app.post("/processAndDeployVideo", async (req, res) => {
 
   try {
     console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
+
     await ytDlp(url, {
       downloadSections: `*${startSec}-${endSec}`,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
       extractorArgs: "youtube:player_client=ios",
-      postprocessorArgs: ["-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart"],
+      postprocessorArgs: [
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-movflags", "+faststart"
+      ],
       output: tempFilePath,
       noWarnings: true,
       forceOverwrites: true,
     });
 
+    if (!fs.existsSync(tempFilePath)) {
+      throw new Error("Download finished but output file not found");
+    }
+
+    console.log("Generating thumbnail...");
     execSync(`ffmpeg -i "${tempFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
 
-    await s3.send(new PutObjectCommand({ Bucket: "zehut-media", Key: `${docId}.jpg`, Body: fs.createReadStream(thumbFilePath), ContentType: "image/jpeg" }));
-    await s3.send(new PutObjectCommand({ Bucket: "zehut-media", Key: fileName, Body: fs.createReadStream(tempFilePath), ContentType: "video/mp4" }));
+    console.log("Uploading JPG to Cloudflare R2...");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "zehut-media",
+        Key: `${docId}.jpg`,
+        Body: fs.createReadStream(thumbFilePath),
+        ContentType: "image/jpeg",
+      })
+    );
 
+    console.log("Uploading MP4 to Cloudflare R2...");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "zehut-media",
+        Key: fileName,
+        Body: fs.createReadStream(tempFilePath),
+        ContentType: "video/mp4",
+      })
+    );
+
+    console.log("Uploading HTML to Cloudflare R2...");
     const htmlFileName = `${docId}.html`;
     const exactLink = `https://gamfeiglintzadak.co.il/${htmlFileName}`;
     const thumbUrl = `https://gamfeiglintzadak.co.il/${docId}.jpg`;
-    const htmlContent = `<!DOCTYPE html><html lang="he"><head><base href="/"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"><meta name="color-scheme" content="dark"><title>${title}</title><meta name="video-id" content="${docId}"><meta property="og:type" content="website"><meta property="og:url" content="${exactLink}"><meta property="og:title" content="${title}"><meta property="og:description" content="צפו לפני הכל כדי להבין את התמונה המלאה."><meta property="og:image" itemprop="image" content="${thumbUrl}"><meta property="og:image:secure_url" itemprop="image" content="${thumbUrl}"><meta property="og:image:type" content="image/jpeg"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:url" content="${exactLink}"><meta name="twitter:title" content="${title}"><meta name="twitter:description" content="צפו לפני הכל כדי להבין את התמונה המלאה."><meta name="twitter:image" content="${thumbUrl}"><style>body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #ffffff; overflow: hidden; }</style></head><body><script>if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(function(registrations) { for(let registration of registrations) { registration.unregister(); } }); } if ('caches' in window) { caches.keys().then(function(names) { for (let name of names) { caches.delete(name); } }); }</script><script src="flutter_bootstrap.js?v256" async></script></body></html>`;
-    
-    await s3.send(new PutObjectCommand({ Bucket: "zehut-media", Key: htmlFileName, Body: htmlContent, ContentType: "text/html; charset=utf-8" }));
+    const htmlContent = `<!DOCTYPE html>
+<html lang="he">
+<head>
+<base href="/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>${title}</title>
+<meta name="video-id" content="${docId}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="${exactLink}">
+<meta property="og:title" content="${title}">
+<meta property="og:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">
+<meta property="og:image" itemprop="image" content="${thumbUrl}">
+<meta property="og:image:secure_url" itemprop="image" content="${thumbUrl}">
+<meta property="og:image:type" content="image/jpeg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:url" content="${exactLink}">
+<meta name="twitter:title" content="${title}">
+<meta name="twitter:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">
+<meta name="twitter:image" content="${thumbUrl}">
+<style>
+body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #ffffff; overflow: hidden; }
+</style>
+</head>
+<body>
+<script>
+if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(function(registrations) { for(let registration of registrations) { registration.unregister(); } }); }
+if ('caches' in window) { caches.keys().then(function(names) { for (let name of names) { caches.delete(name); } }); }
+</script>
+<script src="flutter_bootstrap.js?v256" async></script>
+</body>
+</html>`;
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "zehut-media",
+        Key: htmlFileName,
+        Body: htmlContent,
+        ContentType: "text/html; charset=utf-8",
+      })
+    );
 
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.json({ success: true, fileName });
   } catch (err) {
+    console.error("Pipeline error:", err);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.status(500).json({ error: err.message || "Pipeline failed" });
