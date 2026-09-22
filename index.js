@@ -6,37 +6,6 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
-const { initializeApp } = require("firebase-admin/app");
-const { getAuth } = require("firebase-admin/auth");
-
-// Initialize Firebase 
-initializeApp();
-
-async function cleanGhostAccounts() {
-  const keepUid = "mldpZKH7IFaQwayRQRXDEOeO6TB2";
-  let nextPageToken;
-  let count = 0;
-  const auth = getAuth(); // 🚨 New modular method
-
-  console.log("Hunting ghost accounts...");
-
-  do {
-    const result = await auth.listUsers(1000, nextPageToken);
-    const uidsToDelete = result.users
-        .filter(user => user.providerData.length === 0 && user.uid !== keepUid)
-        .map(user => user.uid);
-
-    if (uidsToDelete.length > 0) {
-      await auth.deleteUsers(uidsToDelete);
-      count += uidsToDelete.length;
-    }
-    nextPageToken = result.pageToken;
-  } while (nextPageToken);
-
-  console.log(`Wiped ${count} ghost accounts. Protected ${keepUid}.`);
-}
-
-cleanGhostAccounts();
 
 const app = express();
 app.use(cors());
