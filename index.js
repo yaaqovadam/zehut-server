@@ -7,6 +7,7 @@ const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
 const admin = require("firebase-admin"); // 🚨 REQUIRED FOR FIREBASE
+const { OpenAI } = require("openai");
 
 // 🚨 INITIALIZE FIREBASE ADMIN
 admin.initializeApp();
@@ -24,6 +25,11 @@ const s3 = new S3Client({
   },
 });
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ==========================================
+// ROUTE 1: VIDEO PROCESSING & R2 DEPLOYMENT
+// ==========================================
 app.post("/processAndDeployVideo", async (req, res) => {
   const { url, start, end, title, docId } = req.body;
   if (!url || !docId || !title) {
@@ -136,6 +142,139 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.status(500).json({ error: err.message || "Pipeline failed" });
+  }
+});
+
+// ==========================================
+// ROUTE 2: WAVEFORM GENERATION
+// ==========================================
+app.post("/generateMissingWaveform", async (req, res) => {
+  const { url, docId } = req.body;
+  if (!url || !docId) return res.status(400).json({ error: "Missing url or docId" });
+
+  const audioFilePath = path.join(os.tmpdir(), `${docId}_wave_audio.mp3`);
+  const waveFilePath = path.join(os.tmpdir(), `${docId}_wave.png`);
+
+  try {
+    console.log(`Extracting audio for waveform: ${docId}`);
+    await ytDlp(url, {
+      extractAudio: true,
+      audioFormat: "mp3",
+      output: audioFilePath,
+      noWarnings: true,
+    });
+
+    console.log("Generating waveform image...");
+    execSync(`ffmpeg -i "${audioFilePath}" -filter_complex "compand,showwavespic=s=1200x250:colors=cyan" -frames:v 1 "${waveFilePath}" -y`);
+
+    console.log("Uploading waveform to R2...");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "zehut-media",
+        Key: `${docId}_wave.png`,
+        Body: fs.createReadStream(waveFilePath),
+        ContentType: "image/png",
+      })
+    );
+
+    const waveUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${docId}_wave.png?v=${Date.now()}`;
+
+    if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    if (fs.existsSync(waveFilePath)) fs.unlinkSync(waveFilePath);
+
+    return res.json({ success: true, waveUrl });
+  } catch (err) {
+    console.error("Waveform error:", err);
+    if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    if (fs.existsSync(waveFilePath)) fs.unlinkSync(waveFilePath);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// ROUTE 3: CADENCE-MATCHED AI TRANSCRIPTION
+// ==========================================
+app.post("/transcribe", async (req, res) => {
+  const { url, docId } = req.body;
+  if (!url || !docId) {
+    return res.status(400).json({ success: false, error: "Missing url or docId" });
+  }
+
+  const audioFilePath = path.join(os.tmpdir(), `${docId}_audio.mp3`);
+
+  try {
+    console.log(`Extracting audio for transcription: ${docId}...`);
+
+    await ytDlp(url, {
+      extractAudio: true,
+      audioFormat: "mp3",
+      output: audioFilePath,
+      noWarnings: true,
+    });
+
+    if (!fs.existsSync(audioFilePath)) throw new Error("Failed to extract audio");
+
+    console.log("Transcribing audio with Whisper...");
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(audioFilePath),
+      model: "whisper-1",
+    });
+
+    const rawTranscript = transcription.text;
+    console.log(`Original Transcript: ${rawTranscript}`);
+
+    console.log("Generating Cadence-Matched Translation...");
+    const systemPrompt = `
+You are a highly specialized rhythmic subtitle sync engine.
+Your objective is to translate the provided text to the target language (English if Hebrew, Hebrew if English), and cluster the translated text into chunks that perfectly mirror the pacing, count, and rhythm of the original spoken text.
+
+CRITICAL RULES:
+1. The 'sourceArray' must contain the literal, word-for-word split of the provided text.
+2. The 'targetArray' must contain the translation, but it MUST have the exact same number of items as the 'sourceArray'.
+3. You must combine or split translated words into phonetic/semantic clusters so they match the spoken cadence of the corresponding index in the source array.
+
+Example (Hebrew to English):
+sourceArray: ["היינו", "בבית", "הגדול"]
+targetArray: ["We were", "in the house", "that is big"]
+
+Return ONLY a raw JSON object with this exact schema:
+{
+  "originalLanguage": "hebrew",
+  "sourceArray": ["word1", "word2"],
+  "targetArray": ["cluster1", "cluster2"]
+}
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Process this text: ${rawTranscript}` }
+      ],
+      response_format: { type: "json_object" }
+    });
+
+    const parsedData = JSON.parse(completion.choices[0].message.content);
+
+    const hebrewString = parsedData.originalLanguage === 'hebrew'
+      ? parsedData.sourceArray.join(" ")
+      : parsedData.targetArray.join(" ");
+
+    const englishString = parsedData.originalLanguage === 'english'
+      ? parsedData.sourceArray.join(" ")
+      : parsedData.targetArray.join(" ");
+
+    if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+
+    return res.json({
+      success: true,
+      data: { he: hebrewString, en: englishString }
+    });
+
+  } catch (err) {
+    console.error("Transcription error:", err);
+    if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
