@@ -212,7 +212,7 @@ Return ONLY a raw JSON object with this exact schema:
 `;
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-3.6-pro", // 🚨 Upgraded to 3.6 to prevent jamming
+      model: "gemini-3.6-flash", // 🚨 Upgraded to 3.6 to prevent jamming
       generationConfig: { responseMimeType: "application/json" }
     });
 
