@@ -259,7 +259,7 @@ app.post("/generateAiImage", async (req, res) => {
       .map(m => m.name.replace("models/", ""));
 
     const geminiCandidates = [...new Set([
-      ...geminiImageModels,
+      "gemini-nano-banana-2.1", "gemini-3.1-flash-image", "gemini-3-pro-image", ...geminiImageModels,
       "nano-banana-pro-preview", "gemini-nano-banana-2.1", "gemini-2.5-flash-image-preview",
       "gemini-2.0-flash-preview-image-generation",
       "gemini-2.0-flash-exp-image-generation",
