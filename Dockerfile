@@ -1,7 +1,8 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     python3 \
+    python-is-python3 \
     python3-pip \
     ffmpeg \
     ca-certificates \
