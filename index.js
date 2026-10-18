@@ -215,7 +215,7 @@ Return ONLY a raw JSON object with this exact schema:
 `;
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-3.6-flash", // 🚨 Upgraded to 3.6 to prevent jamming
+      model: "gemini-3.6-flash",
       generationConfig: { responseMimeType: "application/json" }
     });
 
@@ -286,45 +286,70 @@ app.post("/generateAiImage", async (req, res) => {
     try {
       const textModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const refineRes = await textModel.generateContent(
-        `Convert the following user idea into a TIGHT CLOSE-UP, 85mm telephoto lens, dramatic photorealistic English image prompt (max 40 words). The main subject MUST fill the frame up close (no wide-angle or distant shots). NO text, NO letters, NO words: "${prompt}"`
+        `Translate and expand this user idea into a clear, vivid, photorealistic English image prompt (max 35 words). Show a clear, recognizable scene with human or architectural subjects in medium framing (NOT an abstract macro close-up). NO text, NO letters, NO words: "${prompt}"`
       );
       if (refineRes?.response?.text()) {
         enhancedPrompt = refineRes.response.text().trim();
       }
     } catch (_) {}
 
-    const geminiImgResp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: enhancedPrompt + ", tight close-up shot, 85mm lens, filling the frame" }] }],
-          generationConfig: { responseModalities: ["IMAGE"] },
-        }),
+    // 1. Try Google Imagen 3 API
+    try {
+      const imagenResp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instances: [{ prompt: enhancedPrompt }],
+            parameters: { sampleCount: 1, aspectRatio: "4:3" },
+          }),
+        }
+      );
+      if (imagenResp.ok) {
+        const imagenJson = await imagenResp.json();
+        const b64 = imagenJson?.predictions?.[0]?.bytesBase64Encoded;
+        if (b64) {
+          return res.json({ success: true, imageBase64: b64, enhancedPrompt, provider: "imagen-3" });
+        }
       }
-    );
+    } catch (_) {}
 
-    if (geminiImgResp.ok) {
-      const geminiJson = await geminiImgResp.json();
-      const parts = geminiJson?.candidates?.[0]?.content?.parts || [];
-      const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
-      if (imgPart) {
-        return res.json({ success: true, imageBase64: imgPart.inlineData.data, enhancedPrompt });
+    // 2. Try Gemini 2.0 Flash Experimental Image Generation
+    try {
+      const geminiImgResp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: enhancedPrompt }] }],
+            generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+          }),
+        }
+      );
+      if (geminiImgResp.ok) {
+        const geminiJson = await geminiImgResp.json();
+        const parts = geminiJson?.candidates?.[0]?.content?.parts || [];
+        const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
+        if (imgPart) {
+          return res.json({ success: true, imageBase64: imgPart.inlineData.data, enhancedPrompt, provider: "gemini-2.0" });
+        }
       }
-    }
+    } catch (_) {}
 
+    // 3. Fallback to Flux with nologo=true & safe framing
     const seed = Math.floor(Math.random() * 1000000);
     const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      "Tight close-up shot, 85mm lens, subject fills the frame, " + enhancedPrompt + ", photorealistic, high contrast, cinematic lighting, no text, no watermark"
-    )}?width=1080&height=680&seed=${seed}&nologo=true&model=flux`;
+      enhancedPrompt + ", photorealistic documentary photography, dramatic lighting, no text"
+    )}?width=1080&height=740&seed=${seed}&nologo=true&enhance=false&model=flux`;
 
     const imgResp = await fetch(fluxUrl);
     if (!imgResp.ok) throw new Error("Image generation service returned " + imgResp.status);
     const arrayBuffer = await imgResp.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-    return res.json({ success: true, imageBase64: base64, enhancedPrompt });
+    return res.json({ success: true, imageBase64: base64, enhancedPrompt, provider: "flux" });
   } catch (err) {
     console.error("AI Image Gen Error:", err);
     return res.status(500).json({ error: err.message });
