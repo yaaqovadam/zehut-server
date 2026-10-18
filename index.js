@@ -207,6 +207,25 @@ app.post("/transcribe", async (req, res) => {
   }
 });
 
+
+function compressToJpg60(inputBuffer, prefix) {
+  const inPath = path.join(os.tmpdir(), prefix + "_in.img");
+  const outPath = path.join(os.tmpdir(), prefix + "_out.jpg");
+  try {
+    fs.writeFileSync(inPath, inputBuffer);
+    // -q:v 14 in ffmpeg mjpeg encoder corresponds to ~60% JPEG quality
+    execSync('ffmpeg -y -i "' + inPath + '" -vf "scale=1080:-1" -q:v 14 "' + outPath + '"', { stdio: "ignore" });
+    const compressed = fs.readFileSync(outPath);
+    if (fs.existsSync(inPath)) fs.unlinkSync(inPath);
+    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    return compressed;
+  } catch (e) {
+    if (fs.existsSync(inPath)) fs.unlinkSync(inPath);
+    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    return inputBuffer;
+  }
+}
+
 // ROUTE 4: THUMBNAIL UPLOAD TO R2
 app.post("/uploadThumbnail", async (req, res) => {
   const { docId, fileName, imageBase64 } = req.body;
@@ -219,7 +238,9 @@ app.post("/uploadThumbnail", async (req, res) => {
 
   try {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(cleanBase64, "base64");
+    const rawBuffer = Buffer.from(cleanBase64, "base64");
+    const buffer = compressToJpg60(rawBuffer, "thumb_" + Date.now());
+    console.log("Compressed R2 thumbnail from " + Math.round(rawBuffer.length/1024) + "KB to " + Math.round(buffer.length/1024) + "KB");
 
     await s3.send(
       new PutObjectCommand({
@@ -293,7 +314,10 @@ app.post("/generateAiImage", async (req, res) => {
           const parts = (json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [];
           const imgPart = parts.find(p => p.inlineData && p.inlineData.data);
           if (imgPart) {
-            return res.json({ success: true, imageBase64: imgPart.inlineData.data, provider: modelName });
+            const rawAiBuf = Buffer.from(imgPart.inlineData.data, "base64");
+            const compAiBuf = compressToJpg60(rawAiBuf, "ai_" + Date.now());
+            console.log("Compressed AI image from " + Math.round(rawAiBuf.length/1024) + "KB to " + Math.round(compAiBuf.length/1024) + "KB");
+            return res.json({ success: true, imageBase64: compAiBuf.toString("base64"), provider: modelName });
           }
         } else {
           errors.push(modelName + ": " + ((json.error && json.error.message) || resp.status));
