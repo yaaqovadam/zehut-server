@@ -16,6 +16,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
+// Keep-alive health check for cron-job.org
+app.get("/", (req, res) => res.status(200).send("Zehut Server Active"));
+
 const s3 = new S3Client({
   region: "auto",
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -267,6 +270,66 @@ app.post("/uploadThumbnail", async (req, res) => {
     return res.json({ success: true, fileName: exactJpgName, thumbUrl });
   } catch (err) {
     console.error("Thumbnail upload error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// ROUTE 5: AI THUMBNAIL BACKGROUND GENERATOR
+// ==========================================
+app.post("/generateAiImage", async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+
+  try {
+    let enhancedPrompt = prompt;
+    // 1. Use Gemini to translate Hebrew/short prompts into a vivid cinematic English prompt
+    try {
+      const textModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const refineRes = await textModel.generateContent(
+        `Convert the following user idea into a single vivid, dramatic, photorealistic English image generation prompt (max 45 words). The image MUST contain NO text, NO letters, and NO words, and the main subject should be centered in the upper two-thirds of the frame: "${prompt}"`
+      );
+      if (refineRes?.response?.text()) {
+        enhancedPrompt = refineRes.response.text().trim();
+      }
+    } catch (_) {}
+
+    // 2. Try Gemini Native Image Generation first via REST API
+    const geminiImgResp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: enhancedPrompt }] }],
+          generationConfig: { responseModalities: ["IMAGE"] },
+        }),
+      }
+    );
+
+    if (geminiImgResp.ok) {
+      const geminiJson = await geminiImgResp.json();
+      const parts = geminiJson?.candidates?.[0]?.content?.parts || [];
+      const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
+      if (imgPart) {
+        return res.json({ success: true, imageBase64: imgPart.inlineData.data, enhancedPrompt });
+      }
+    }
+
+    // 3. Automatic $0 Fallback to Flux (Pollinations) if Gemini Image quota/tier is restricted
+    const seed = Math.floor(Math.random() * 1000000);
+    const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+      enhancedPrompt + ", photorealistic, high contrast, cinematic lighting, no text, no watermark"
+    )}?width=1080&height=1080&seed=${seed}&nologo=true&model=flux`;
+
+    const imgResp = await fetch(fluxUrl);
+    if (!imgResp.ok) throw new Error("Image generation service returned " + imgResp.status);
+    const arrayBuffer = await imgResp.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+
+    return res.json({ success: true, imageBase64: base64, enhancedPrompt });
+  } catch (err) {
+    console.error("AI Image Gen Error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
