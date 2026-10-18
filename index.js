@@ -9,19 +9,31 @@ const { execSync } = require("child_process");
 const admin = require("firebase-admin");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// INITIALIZE FIREBASE ADMIN
 admin.initializeApp();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
-// Keep-alive health check for cron-job.org
 app.get("/", (req, res) => res.status(200).send("Zehut Server Active"));
+
+app.get("/models", async (req, res) => {
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" + process.env.GEMINI_API_KEY);
+    const data = await r.json();
+    const models = (data.models || []).map(m => ({
+      name: m.name,
+      methods: m.supportedGenerationMethods
+    }));
+    res.json({ count: models.length, models });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 const s3 = new S3Client({
   region: "auto",
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  endpoint: "https://" + process.env.R2_ACCOUNT_ID + ".r2.cloudflarestorage.com",
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY,
     secretAccessKey: process.env.R2_SECRET_KEY,
@@ -30,24 +42,20 @@ const s3 = new S3Client({
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ==========================================
 // ROUTE 1: VIDEO PROCESSING & R2 DEPLOYMENT
-// ==========================================
 app.post("/processAndDeployVideo", async (req, res) => {
   const { url, start, end, title, docId } = req.body;
   if (!url || !docId || !title) return res.status(400).json({ error: "Missing required fields." });
 
   const startSec = parseInt(start) || 0;
   const endSec = parseInt(end) || 15;
-  const fileName = `${docId}.mp4`;
+  const fileName = docId + ".mp4";
   const tempFilePath = path.join(os.tmpdir(), fileName);
-  const thumbFilePath = path.join(os.tmpdir(), `${docId}.jpg`);
+  const thumbFilePath = path.join(os.tmpdir(), docId + ".jpg");
 
   try {
-    console.log(`Processing ${url} [${startSec}s - ${endSec}s]...`);
-
     await ytDlp(url, {
-      downloadSections: `*${startSec}-${endSec}`,
+      downloadSections: "*" + startSec + "-" + endSec,
       format: "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best",
       mergeOutputFormat: "mp4",
       extractorArgs: "youtube:player_client=ios",
@@ -59,20 +67,17 @@ app.post("/processAndDeployVideo", async (req, res) => {
 
     if (!fs.existsSync(tempFilePath)) throw new Error("Download finished but output file not found");
 
-    console.log("Generating thumbnail...");
-    execSync(`ffmpeg -i "${tempFilePath}" -ss 00:00:01 -vframes 1 "${thumbFilePath}" -y`);
+    execSync('ffmpeg -i "' + tempFilePath + '" -ss 00:00:01 -vframes 1 "' + thumbFilePath + '" -y');
 
-    console.log("Uploading JPG to Cloudflare R2...");
     await s3.send(
       new PutObjectCommand({
         Bucket: "zehut-media",
-        Key: `${docId}.jpg`,
+        Key: docId + ".jpg",
         Body: fs.createReadStream(thumbFilePath),
         ContentType: "image/jpeg",
       })
     );
 
-    console.log("Uploading MP4 to Cloudflare R2...");
     await s3.send(
       new PutObjectCommand({
         Bucket: "zehut-media",
@@ -82,43 +87,41 @@ app.post("/processAndDeployVideo", async (req, res) => {
       })
     );
 
-    console.log("Uploading HTML to Cloudflare R2...");
-    const htmlFileName = `${docId}.html`;
-    const exactLink = `https://gamfeiglintzadak.co.il/${htmlFileName}`;
-    const thumbUrl = `https://gamfeiglintzadak.co.il/${docId}.jpg`;
-    const htmlContent = `<!DOCTYPE html>
-<html lang="he">
-<head>
-<base href="/">
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="color-scheme" content="dark">
-<title>${title}</title>
-<meta name="video-id" content="${docId}">
-<meta property="og:type" content="website">
-<meta property="og:url" content="${exactLink}">
-<meta property="og:title" content="${title}">
-<meta property="og:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">
-<meta property="og:image" itemprop="image" content="${thumbUrl}">
-<meta property="og:image:secure_url" itemprop="image" content="${thumbUrl}">
-<meta property="og:image:type" content="image/jpeg">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:url" content="${exactLink}">
-<meta name="twitter:title" content="${title}">
-<meta name="twitter:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">
-<meta name="twitter:image" content="${thumbUrl}">
-<style>
-body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #ffffff; overflow: hidden; }
-</style>
-</head>
-<body>
-<script>
-if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(function(registrations) { for(let registration of registrations) { registration.unregister(); } }); }
-if ('caches' in window) { caches.keys().then(function(names) { for (let name of names) { caches.delete(name); } }); }
-</script>
-<script src="flutter_bootstrap.js?v256" async></script>
-</body>
-</html>`;
+    const htmlFileName = docId + ".html";
+    const exactLink = "https://gamfeiglintzadak.co.il/" + htmlFileName;
+    const thumbUrl = "https://gamfeiglintzadak.co.il/" + docId + ".jpg";
+    const htmlContent = [
+      '<!DOCTYPE html>',
+      '<html lang="he">',
+      '<head>',
+      '<base href="/">',
+      '<meta charset="UTF-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">',
+      '<meta name="color-scheme" content="dark">',
+      '<title>' + title + '</title>',
+      '<meta name="video-id" content="' + docId + '">',
+      '<meta property="og:type" content="website">',
+      '<meta property="og:url" content="' + exactLink + '">',
+      '<meta property="og:title" content="' + title + '">',
+      '<meta property="og:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">',
+      '<meta property="og:image" itemprop="image" content="' + thumbUrl + '">',
+      '<meta property="og:image:secure_url" itemprop="image" content="' + thumbUrl + '">',
+      '<meta property="og:image:type" content="image/jpeg">',
+      '<meta name="twitter:card" content="summary_large_image">',
+      '<meta name="twitter:url" content="' + exactLink + '">',
+      '<meta name="twitter:title" content="' + title + '">',
+      '<meta name="twitter:description" content="צפו לפני הכל כדי להבין את התמונה המלאה.">',
+      '<meta name="twitter:image" content="' + thumbUrl + '">',
+      '<style>body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #ffffff; overflow: hidden; }</style>',
+      '</head>',
+      '<body>',
+      '<script>',
+      "if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(function(registrations) { for(let registration of registrations) { registration.unregister(); } }); }",
+      '</script>',
+      '<script src="flutter_bootstrap.js?v256" async></script>',
+      '</body>',
+      '</html>'
+    ].join("\n");
 
     await s3.send(
       new PutObjectCommand({
@@ -133,36 +136,29 @@ if ('caches' in window) { caches.keys().then(function(names) { for (let name of 
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.json({ success: true, fileName });
   } catch (err) {
-    console.error("Pipeline error:", err);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(thumbFilePath)) fs.unlinkSync(thumbFilePath);
     return res.status(500).json({ error: err.message || "Pipeline failed" });
   }
 });
 
-// ==========================================
 // ROUTE 2: WAVEFORM GENERATION
-// ==========================================
 app.post("/generateMissingWaveform", async (req, res) => {
   const { url, docId } = req.body;
   if (!url || !docId) return res.status(400).json({ error: "Missing url or docId" });
 
-  const audioFilePath = path.join(os.tmpdir(), `${docId}_wave_audio.mp3`);
-  const waveFilePath = path.join(os.tmpdir(), `${docId}_wave.png`);
+  const audioFilePath = path.join(os.tmpdir(), docId + "_wave_audio.mp3");
+  const waveFilePath = path.join(os.tmpdir(), docId + "_wave.png");
 
   try {
-    console.log(`Extracting audio for waveform: ${docId}`);
     await ytDlp(url, { extractAudio: true, audioFormat: "mp3", output: audioFilePath, noWarnings: true });
+    execSync('ffmpeg -i "' + audioFilePath + '" -filter_complex "compand,showwavespic=s=1200x250:colors=cyan" -frames:v 1 "' + waveFilePath + '" -y');
 
-    console.log("Generating waveform image...");
-    execSync(`ffmpeg -i "${audioFilePath}" -filter_complex "compand,showwavespic=s=1200x250:colors=cyan" -frames:v 1 "${waveFilePath}" -y`);
-
-    console.log("Uploading waveform to R2...");
     await s3.send(
-      new PutObjectCommand({ Bucket: "zehut-media", Key: `${docId}_wave.png`, Body: fs.createReadStream(waveFilePath), ContentType: "image/png" })
+      new PutObjectCommand({ Bucket: "zehut-media", Key: docId + "_wave.png", Body: fs.createReadStream(waveFilePath), ContentType: "image/png" })
     );
 
-    const waveUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${docId}_wave.png?v=${Date.now()}`;
+    const waveUrl = "https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/" + docId + "_wave.png?v=" + Date.now();
 
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
     if (fs.existsSync(waveFilePath)) fs.unlinkSync(waveFilePath);
@@ -175,44 +171,19 @@ app.post("/generateMissingWaveform", async (req, res) => {
   }
 });
 
-// ==========================================
 // ROUTE 3: GEMINI CADENCE-MATCHED TRANSCRIPTION
-// ==========================================
 app.post("/transcribe", async (req, res) => {
   const { url, docId } = req.body;
   if (!url || !docId) return res.status(400).json({ success: false, error: "Missing url or docId" });
 
-  const audioFilePath = path.join(os.tmpdir(), `${docId}_audio.mp3`);
+  const audioFilePath = path.join(os.tmpdir(), docId + "_audio.mp3");
 
   try {
-    console.log(`Extracting audio for transcription: ${docId}...`);
     await ytDlp(url, { extractAudio: true, audioFormat: "mp3", output: audioFilePath, noWarnings: true });
-
     if (!fs.existsSync(audioFilePath)) throw new Error("Failed to extract audio");
 
-    console.log("Sending MP3 directly to Gemini 1.5 Pro...");
     const audioBytes = fs.readFileSync(audioFilePath).toString("base64");
-
-    const systemPrompt = `
-You are a highly specialized rhythmic subtitle sync engine.
-Listen to the provided audio. Your objective is to transcribe the spoken text in its original language, translate it to the target language (English if Hebrew, Hebrew if English), and cluster the translated text into chunks that perfectly mirror the pacing, count, and rhythm of the original spoken text.
-
-CRITICAL RULES:
-1. The 'sourceArray' must contain the literal, word-for-word transcription of the spoken audio.
-2. The 'targetArray' must contain the translation, but it MUST have the exact same number of items as the 'sourceArray'.
-3. You must combine or split translated words into phonetic/semantic clusters so they match the spoken cadence of the corresponding index in the source array.
-
-Example (Hebrew to English):
-sourceArray: ["היינו", "בבית", "הגדול"]
-targetArray: ["We were", "in the house", "that is big"]
-
-Return ONLY a raw JSON object with this exact schema:
-{
-  "originalLanguage": "hebrew",
-  "sourceArray": ["word1", "word2"],
-  "targetArray": ["cluster1", "cluster2"]
-}
-`;
+    const systemPrompt = "You are a highly specialized rhythmic subtitle sync engine. Listen to the provided audio. Your objective is to transcribe the spoken text in its original language, translate it to the target language (English if Hebrew, Hebrew if English), and cluster the translated text into chunks that perfectly mirror the pacing, count, and rhythm of the original spoken text.\n\nCRITICAL RULES:\n1. The 'sourceArray' must contain the literal, word-for-word transcription of the spoken audio.\n2. The 'targetArray' must contain the translation, but it MUST have the exact same number of items as the 'sourceArray'.\n3. You must combine or split translated words into phonetic/semantic clusters so they match the spoken cadence of the corresponding index in the source array.\n\nReturn ONLY a raw JSON object with this exact schema:\n{\n  \"originalLanguage\": \"hebrew\",\n  \"sourceArray\": [\"word1\", \"word2\"],\n  \"targetArray\": [\"cluster1\", \"cluster2\"]\n}";
 
     const model = genAI.getGenerativeModel({
       model: "gemini-3.6-flash",
@@ -225,24 +196,18 @@ Return ONLY a raw JSON object with this exact schema:
     ]);
 
     const parsedData = JSON.parse(result.response.text());
-
-    const hebrewString = parsedData.originalLanguage === 'hebrew' ? parsedData.sourceArray.join(" ") : parsedData.targetArray.join(" ");
-    const englishString = parsedData.originalLanguage === 'english' ? parsedData.sourceArray.join(" ") : parsedData.targetArray.join(" ");
+    const hebrewString = parsedData.originalLanguage === "hebrew" ? parsedData.sourceArray.join(" ") : parsedData.targetArray.join(" ");
+    const englishString = parsedData.originalLanguage === "english" ? parsedData.sourceArray.join(" ") : parsedData.targetArray.join(" ");
 
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
-
     return res.json({ success: true, data: { he: hebrewString, en: englishString } });
-
   } catch (err) {
-    console.error("Transcription error:", err);
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ==========================================
 // ROUTE 4: THUMBNAIL UPLOAD TO R2
-// ==========================================
 app.post("/uploadThumbnail", async (req, res) => {
   const { docId, fileName, imageBase64 } = req.body;
   const targetPrefix = (docId || fileName || "").replace(/\.(jpg|jpeg|png|mp4|html)$/i, "").trim();
@@ -250,13 +215,12 @@ app.post("/uploadThumbnail", async (req, res) => {
     return res.status(400).json({ error: "Missing docId/fileName or imageBase64" });
   }
 
-  const exactJpgName = `${targetPrefix}.jpg`;
+  const exactJpgName = targetPrefix + ".jpg";
 
   try {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const buffer = Buffer.from(cleanBase64, "base64");
 
-    console.log(`Uploading custom thumbnail ${exactJpgName} to Cloudflare R2...`);
     await s3.send(
       new PutObjectCommand({
         Bucket: "zehut-media",
@@ -266,95 +230,111 @@ app.post("/uploadThumbnail", async (req, res) => {
       })
     );
 
-    const thumbUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${exactJpgName}`;
+    const thumbUrl = "https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/" + exactJpgName;
     return res.json({ success: true, fileName: exactJpgName, thumbUrl });
   } catch (err) {
-    console.error("Thumbnail upload error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ==========================================
-// ROUTE 5: AI THUMBNAIL BACKGROUND GENERATOR
-// ==========================================
+// ROUTE 5: REAL GOOGLE AI IMAGE GENERATOR
 app.post("/generateAiImage", async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: "Missing prompt" });
 
+  const apiKey = process.env.GEMINI_API_KEY;
+  const errors = [];
+
   try {
-    let enhancedPrompt = prompt;
-    try {
-      const textModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const refineRes = await textModel.generateContent(
-        `Translate and expand this user idea into a clear, vivid, photorealistic English image prompt (max 35 words). Show a clear, recognizable scene with human or architectural subjects in medium framing (NOT an abstract macro close-up). NO text, NO letters, NO words: "${prompt}"`
-      );
-      if (refineRes?.response?.text()) {
-        enhancedPrompt = refineRes.response.text().trim();
+    const listResp = await fetch("https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey);
+    const listData = await listResp.json();
+    const allModels = listData.models || [];
+
+    const geminiImageModels = allModels
+      .filter(m => m.name.includes("image") && (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map(m => m.name.replace("models/", ""));
+
+    const imagenModels = allModels
+      .filter(m => m.name.includes("imagen") && (m.supportedGenerationMethods || []).includes("predict"))
+      .map(m => m.name.replace("models/", ""));
+
+    const geminiCandidates = [...new Set([
+      ...geminiImageModels,
+      "gemini-2.5-flash-image-preview",
+      "gemini-2.0-flash-preview-image-generation",
+      "gemini-2.0-flash-exp-image-generation",
+      "gemini-2.0-flash-exp"
+    ])];
+
+    const imagenCandidates = [...new Set([
+      ...imagenModels,
+      "imagen-3.0-generate-002",
+      "imagen-3.0-generate-001",
+      "imagen-3.0-fast-generate-001"
+    ])];
+
+    const fullPrompt = "Generate a high-contrast, ultra-crisp, photorealistic image (NO text, NO letters, NO words anywhere in the image): " + prompt;
+
+    for (const modelName of geminiCandidates) {
+      try {
+        const resp = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent?key=" + apiKey,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: fullPrompt }] }],
+              generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+            }),
+          }
+        );
+        const json = await resp.json();
+        if (resp.ok) {
+          const parts = (json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [];
+          const imgPart = parts.find(p => p.inlineData && p.inlineData.data);
+          if (imgPart) {
+            return res.json({ success: true, imageBase64: imgPart.inlineData.data, provider: modelName });
+          }
+        } else {
+          errors.push(modelName + ": " + ((json.error && json.error.message) || resp.status));
+        }
+      } catch (e) {
+        errors.push(modelName + ": " + e.message);
       }
-    } catch (_) {}
+    }
 
-    // 1. Try Google Imagen 3 API
-    try {
-      const imagenResp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${process.env.GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            instances: [{ prompt: enhancedPrompt }],
-            parameters: { sampleCount: 1, aspectRatio: "4:3" },
-          }),
+    for (const modelName of imagenCandidates) {
+      try {
+        const resp = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":predict?key=" + apiKey,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              instances: [{ prompt: fullPrompt }],
+              parameters: { sampleCount: 1, aspectRatio: "1:1" },
+            }),
+          }
+        );
+        const json = await resp.json();
+        if (resp.ok) {
+          const b64 = json.predictions && json.predictions[0] && json.predictions[0].bytesBase64Encoded;
+          if (b64) {
+            return res.json({ success: true, imageBase64: b64, provider: modelName });
+          }
+        } else {
+          errors.push(modelName + ": " + ((json.error && json.error.message) || resp.status));
         }
-      );
-      if (imagenResp.ok) {
-        const imagenJson = await imagenResp.json();
-        const b64 = imagenJson?.predictions?.[0]?.bytesBase64Encoded;
-        if (b64) {
-          return res.json({ success: true, imageBase64: b64, enhancedPrompt, provider: "imagen-3" });
-        }
+      } catch (e) {
+        errors.push(modelName + ": " + e.message);
       }
-    } catch (_) {}
+    }
 
-    // 2. Try Gemini 2.0 Flash Experimental Image Generation
-    try {
-      const geminiImgResp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: enhancedPrompt }] }],
-            generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-          }),
-        }
-      );
-      if (geminiImgResp.ok) {
-        const geminiJson = await geminiImgResp.json();
-        const parts = geminiJson?.candidates?.[0]?.content?.parts || [];
-        const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
-        if (imgPart) {
-          return res.json({ success: true, imageBase64: imgPart.inlineData.data, enhancedPrompt, provider: "gemini-2.0" });
-        }
-      }
-    } catch (_) {}
-
-    // 3. Fallback to Flux with nologo=true & safe framing
-    const seed = Math.floor(Math.random() * 1000000);
-    const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      enhancedPrompt + ", photorealistic documentary photography, dramatic lighting, no text"
-    )}?width=1080&height=740&seed=${seed}&nologo=true&enhance=false&model=flux`;
-
-    const imgResp = await fetch(fluxUrl);
-    if (!imgResp.ok) throw new Error("Image generation service returned " + imgResp.status);
-    const arrayBuffer = await imgResp.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-
-    return res.json({ success: true, imageBase64: base64, enhancedPrompt, provider: "flux" });
+    return res.status(500).json({ error: "No Google Image models succeeded on this key.", details: errors });
   } catch (err) {
-    console.error("AI Image Gen Error:", err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message, details: errors });
   }
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
+app.listen(PORT, () => console.log("Listening on port " + PORT));
