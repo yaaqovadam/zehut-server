@@ -283,25 +283,23 @@ app.post("/generateAiImage", async (req, res) => {
 
   try {
     let enhancedPrompt = prompt;
-    // 1. Use Gemini to translate Hebrew/short prompts into a vivid cinematic English prompt
     try {
       const textModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const refineRes = await textModel.generateContent(
-        `Convert the following user idea into a single vivid, dramatic, photorealistic English image generation prompt (max 45 words). The image MUST contain NO text, NO letters, and NO words, and the main subject should be centered in the upper two-thirds of the frame: "${prompt}"`
+        `Convert the following user idea into a TIGHT CLOSE-UP, 85mm telephoto lens, dramatic photorealistic English image prompt (max 40 words). The main subject MUST fill the frame up close (no wide-angle or distant shots). NO text, NO letters, NO words: "${prompt}"`
       );
       if (refineRes?.response?.text()) {
         enhancedPrompt = refineRes.response.text().trim();
       }
     } catch (_) {}
 
-    // 2. Try Gemini Native Image Generation first via REST API
     const geminiImgResp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: enhancedPrompt }] }],
+          contents: [{ parts: [{ text: enhancedPrompt + ", tight close-up shot, 85mm lens, filling the frame" }] }],
           generationConfig: { responseModalities: ["IMAGE"] },
         }),
       }
@@ -316,11 +314,10 @@ app.post("/generateAiImage", async (req, res) => {
       }
     }
 
-    // 3. Automatic $0 Fallback to Flux (Pollinations) if Gemini Image quota/tier is restricted
     const seed = Math.floor(Math.random() * 1000000);
     const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      enhancedPrompt + ", photorealistic, high contrast, cinematic lighting, no text, no watermark"
-    )}?width=1080&height=1080&seed=${seed}&nologo=true&model=flux`;
+      "Tight close-up shot, 85mm lens, subject fills the frame, " + enhancedPrompt + ", photorealistic, high contrast, cinematic lighting, no text, no watermark"
+    )}?width=1080&height=680&seed=${seed}&nologo=true&model=flux`;
 
     const imgResp = await fetch(fluxUrl);
     if (!imgResp.ok) throw new Error("Image generation service returned " + imgResp.status);
