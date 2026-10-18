@@ -260,7 +260,7 @@ app.post("/generateAiImage", async (req, res) => {
 
     const geminiCandidates = [...new Set([
       ...geminiImageModels,
-      "gemini-2.5-flash-image-preview",
+      "nano-banana-pro-preview", "gemini-nano-banana-2.1", "gemini-2.5-flash-image-preview",
       "gemini-2.0-flash-preview-image-generation",
       "gemini-2.0-flash-exp-image-generation",
       "gemini-2.0-flash-exp"
