@@ -14,7 +14,7 @@ admin.initializeApp();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 
 const s3 = new S3Client({
   region: "auto",
@@ -234,6 +234,40 @@ Return ONLY a raw JSON object with this exact schema:
     console.error("Transcription error:", err);
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// ROUTE 4: THUMBNAIL UPLOAD TO R2
+// ==========================================
+app.post("/uploadThumbnail", async (req, res) => {
+  const { docId, fileName, imageBase64 } = req.body;
+  const targetPrefix = (docId || fileName || "").replace(/\.(jpg|jpeg|png|mp4|html)$/i, "").trim();
+  if (!targetPrefix || !imageBase64) {
+    return res.status(400).json({ error: "Missing docId/fileName or imageBase64" });
+  }
+
+  const exactJpgName = `${targetPrefix}.jpg`;
+
+  try {
+    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(cleanBase64, "base64");
+
+    console.log(`Uploading custom thumbnail ${exactJpgName} to Cloudflare R2...`);
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: "zehut-media",
+        Key: exactJpgName,
+        Body: buffer,
+        ContentType: "image/jpeg",
+      })
+    );
+
+    const thumbUrl = `https://pub-142306085f2b48bda4045cd9efdd0d28.r2.dev/${exactJpgName}`;
+    return res.json({ success: true, fileName: exactJpgName, thumbUrl });
+  } catch (err) {
+    console.error("Thumbnail upload error:", err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
