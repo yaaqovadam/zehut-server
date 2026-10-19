@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
 const ytDlp = require("yt-dlp-exec");
 const fs = require("fs");
 const path = require("path");
@@ -361,5 +361,82 @@ app.post("/generateAiImage", async (req, res) => {
 });
 
 app.post("/syncHtmlBatch", async (req, res) => { try { await Promise.all(req.body.files.map(f => s3.send(new PutObjectCommand({ Bucket: "zehut-media", Key: f.name, Body: f.content, ContentType: "text/html; charset=utf-8" })))); res.json({ success: true, count: req.body.files.length }); } catch (e) { res.status(500).json({ error: e.message }); } });
+
+// ==========================================
+// ROUTE 7: REAL HUMAN VISITOR ANALYTICS (R2 BACKED)
+// ==========================================
+let memStats = null;
+
+async function loadStatsFromR2() {
+  if (memStats) return memStats;
+  try {
+    const resp = await s3.send(new GetObjectCommand({ Bucket: "zehut-media", Key: "_site_stats.json" }));
+    const str = await resp.Body.transformToString();
+    memStats = JSON.parse(str);
+  } catch (_) {
+    memStats = { totalSessions: 0, uniqueVisitors: 0, dailyUnique: {}, dailySessions: {}, pages: {} };
+  }
+  return memStats;
+}
+
+async function saveStatsToR2(stats) {
+  memStats = stats;
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: "zehut-media",
+      Key: "_site_stats.json",
+      Body: JSON.stringify(stats),
+      ContentType: "application/json"
+    }));
+  } catch (e) {
+    console.error("Stats save error:", e.message);
+  }
+}
+
+app.post("/hitVisit", async (req, res) => {
+  try {
+    const { isNewEver, isNewToday, page } = req.body || {};
+    const stats = await loadStatsFromR2();
+    const today = new Date().toISOString().slice(0, 10);
+
+    stats.totalSessions = (stats.totalSessions || 0) + 1;
+    if (isNewEver) stats.uniqueVisitors = (stats.uniqueVisitors || 0) + 1;
+
+    stats.dailySessions = stats.dailySessions || {};
+    stats.dailySessions[today] = (stats.dailySessions[today] || 0) + 1;
+
+    stats.dailyUnique = stats.dailyUnique || {};
+    if (isNewToday) {
+      stats.dailyUnique[today] = (stats.dailyUnique[today] || 0) + 1;
+    }
+
+    if (page) {
+      stats.pages = stats.pages || {};
+      stats.pages[page] = (stats.pages[page] || 0) + 1;
+    }
+
+    await saveStatsToR2(stats);
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/getStats", async (req, res) => {
+  try {
+    const stats = await loadStatsFromR2();
+    const today = new Date().toISOString().slice(0, 10);
+    return res.json({
+      totalUnique: stats.uniqueVisitors || 0,
+      totalSessions: stats.totalSessions || 0,
+      todayUnique: (stats.dailyUnique && stats.dailyUnique[today]) || 0,
+      todaySessions: (stats.dailySessions && stats.dailySessions[today]) || 0,
+      pages: stats.pages || {}
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log("Listening on port " + PORT));
