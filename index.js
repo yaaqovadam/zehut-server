@@ -360,5 +360,6 @@ app.post("/generateAiImage", async (req, res) => {
   }
 });
 
+app.post("/syncHtmlBatch", async (req, res) => { try { await Promise.all(req.body.files.map(f => s3.send(new PutObjectCommand({ Bucket: "zehut-media", Key: f.name, Body: f.content, ContentType: "text/html; charset=utf-8" })))); res.json({ success: true, count: req.body.files.length }); } catch (e) { res.status(500).json({ error: e.message }); } });
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log("Listening on port " + PORT));
