@@ -171,7 +171,7 @@ app.post("/generateMissingWaveform", async (req, res) => {
   }
 });
 
-// ROUTE 3: GEMINI CADENCE-MATCHED TRANSCRIPTION
+// ROUTE 3: GEMINI CADENCE-MATCHED & TIMESTAMP-LOCKED TRANSCRIPTION (1-6 WORDS/ROW)
 app.post("/transcribe", async (req, res) => {
   const { url, docId } = req.body;
   if (!url || !docId) return res.status(400).json({ success: false, error: "Missing url or docId" });
@@ -183,7 +183,34 @@ app.post("/transcribe", async (req, res) => {
     if (!fs.existsSync(audioFilePath)) throw new Error("Failed to extract audio");
 
     const audioBytes = fs.readFileSync(audioFilePath).toString("base64");
-    const systemPrompt = "You are a highly specialized rhythmic subtitle sync engine. Listen to the provided audio. Your objective is to transcribe the spoken text in its original language, translate it to the target language (English if Hebrew, Hebrew if English), and cluster the translated text into chunks that perfectly mirror the pacing, count, and rhythm of the original spoken text.\n\nCRITICAL RULES:\n1. The 'sourceArray' must contain the literal, word-for-word transcription of the spoken audio.\n2. The 'targetArray' must contain the translation, but it MUST have the exact same number of items as the 'sourceArray'.\n3. You must combine or split translated words into phonetic/semantic clusters so they match the spoken cadence of the corresponding index in the source array.\n\nReturn ONLY a raw JSON object with this exact schema:\n{\n  \"originalLanguage\": \"hebrew\",\n  \"sourceArray\": [\"word1\", \"word2\"],\n  \"targetArray\": [\"cluster1\", \"cluster2\"]\n}";
+    const systemPrompt = [
+      "You are a precision rhythmic subtitle-sync engine.",
+      "Listen to the audio and produce a timestamp-locked, word-count-matched bilingual transcription (Hebrew and English).",
+      "",
+      "CRITICAL RULES:",
+      "1. Group the speech into natural subtitle rows of 1 to 6 words maximum per row ('blocks').",
+      "2. For every single block, the Hebrew phrase ('he') and the English phrase ('en') MUST have the EXACT SAME number of space-separated words (1 to 6 words). If a translation naturally needs an extra word, condense it or hyphenate two words (e.g., 'gone-crazy', 'right-wing') so the space-separated word count matches 1-to-1.",
+      "3. Provide exact 'start' and 'end' timestamps in seconds (e.g., 0.5, 2.8) for each block and each word based on the exact moment the word is spoken in the audio.",
+      "4. Also provide the flat 'sourceArray' and 'targetArray' of every word across the entire clip where sourceArray.length === targetArray.length.",
+      "",
+      "Return ONLY a raw JSON object with this exact schema:",
+      "{",
+      '  "originalLanguage": "hebrew",',
+      '  "sourceArray": ["word1", "word2"],',
+      '  "targetArray": ["word1", "word2"],',
+      '  "blocks": [',
+      '    {',
+      '      "start": 0.5,',
+      '      "end": 2.8,',
+      '      "he": "ויש להם עדות יודעים של מי?",',
+      '      "en": "They have testimony—know from whom?",',
+      '      "words": [',
+      '        { "he": "ויש", "en": "They", "start": 0.5, "end": 0.8 }',
+      '      ]',
+      '    }',
+      '  ]',
+      "}"
+    ].join("\n");
 
     const model = genAI.getGenerativeModel({
       model: "gemini-3.6-flash",
@@ -196,11 +223,30 @@ app.post("/transcribe", async (req, res) => {
     ]);
 
     const parsedData = JSON.parse(result.response.text());
-    const hebrewString = parsedData.originalLanguage === "hebrew" ? parsedData.sourceArray.join(" ") : parsedData.targetArray.join(" ");
-    const englishString = parsedData.originalLanguage === "english" ? parsedData.sourceArray.join(" ") : parsedData.targetArray.join(" ");
+    const srcArr = Array.isArray(parsedData.sourceArray) ? parsedData.sourceArray : [];
+    const tgtArr = Array.isArray(parsedData.targetArray) ? parsedData.targetArray : [];
+
+    const hebrewString = parsedData.originalLanguage === "hebrew" ? srcArr.join(" ") : tgtArr.join(" ");
+    const englishString = parsedData.originalLanguage === "english" ? srcArr.join(" ") : tgtArr.join(" ");
+
+    const blocks = Array.isArray(parsedData.blocks) ? parsedData.blocks : [];
+    const words = [];
+    for (const b of blocks) {
+      if (Array.isArray(b.words)) {
+        for (const w of b.words) words.push(w);
+      }
+    }
 
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
-    return res.json({ success: true, data: { he: hebrewString, en: englishString } });
+    return res.json({
+      success: true,
+      data: {
+        he: hebrewString,
+        en: englishString,
+        blocks: blocks,
+        words: words
+      }
+    });
   } catch (err) {
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
     return res.status(500).json({ success: false, error: err.message });
