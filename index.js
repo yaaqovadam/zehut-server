@@ -190,8 +190,7 @@ app.post("/transcribe", async (req, res) => {
       "1. Transcribe 100% of the spoken audio from beginning to end into natural subtitle rows of 1 to 6 words maximum per row (blocks).",
       "2. For every single block, the Hebrew phrase (he) and the English phrase (en) MUST have the EXACT SAME number of space-separated words (1 to 6 words). If a translation naturally needs an extra word, condense it or hyphenate two words (e.g., gone-crazy, right-wing, know-from) so the space-separated word count matches 1-to-1.",
       "3. Provide exact start and end timestamps in seconds (e.g., 0.5, 2.8) for each block matching the exact moment those words are spoken.",
-      "Return ONLY a raw JSON object with this exact schema:",
-      '{"originalLanguage":"hebrew","blocks":[{"start":0.5,"end":2.8,"he":"ויש להם עדות יודעים של מי?","en":"They have testimony know-from whom?"}]}'
+      "4. NEVER use double quotes inside Hebrew or English strings. For Hebrew acronyms (like צהל or בגץ) or quotes, use a single apostrophe (') or Hebrew geresh (״)."
     ].join("\n");
 
     const model = genAI.getGenerativeModel({
@@ -200,7 +199,27 @@ app.post("/transcribe", async (req, res) => {
         responseMimeType: "application/json",
         maxOutputTokens: 65536,
         temperature: 0.1,
-        thinkingConfig: { thinkingBudget: 0 }
+        thinkingConfig: { thinkingBudget: 0 },
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            originalLanguage: { type: "STRING" },
+            blocks: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  start: { type: "NUMBER" },
+                  end: { type: "NUMBER" },
+                  he: { type: "STRING" },
+                  en: { type: "STRING" }
+                },
+                required: ["start", "end", "he", "en"]
+              }
+            }
+          },
+          required: ["originalLanguage", "blocks"]
+        }
       }
     });
 
@@ -209,8 +228,25 @@ app.post("/transcribe", async (req, res) => {
       { inlineData: { data: audioBytes, mimeType: "audio/mp3" } }
     ]);
 
-    const parsedData = JSON.parse(result.response.text());
-    const blocks = Array.isArray(parsedData.blocks) ? parsedData.blocks : [];
+    const rawText = result.response.text();
+    let blocks = [];
+    try {
+      const parsedData = JSON.parse(rawText);
+      blocks = Array.isArray(parsedData.blocks) ? parsedData.blocks : [];
+    } catch (parseErr) {
+      // Fallback: salvage all complete block objects even if a quote or truncation broke outer JSON
+      const blockRegex = /\{\s*"start"\s*:\s*([0-9.]+)\s*,\s*"end"\s*:\s*([0-9.]+)\s*,\s*"he"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"en"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}/g;
+      let match;
+      while ((match = blockRegex.exec(rawText)) !== null) {
+        blocks.push({
+          start: parseFloat(match[1]),
+          end: parseFloat(match[2]),
+          he: match[3].replace(/\\"/g, "'"),
+          en: match[4].replace(/\\"/g, "'")
+        });
+      }
+      if (blocks.length === 0) throw parseErr;
+    }
 
     const hebrewString = blocks.map(b => (b.he || "").trim()).filter(Boolean).join(" ");
     const englishString = blocks.map(b => (b.en || "").trim()).filter(Boolean).join(" ");
