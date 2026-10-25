@@ -185,25 +185,13 @@ app.post("/transcribe", async (req, res) => {
     const audioBytes = fs.readFileSync(audioFilePath).toString("base64");
     const systemPrompt = [
       "You are a precision rhythmic subtitle-sync engine.",
-      "Listen to the ENTIRE audio clip from 0:00 all the way to the very last second. Do NOT stop early or summarize.",
-      "",
+      "Listen to the ENTIRE audio clip from 0:00 all the way to the very last second. Do NOT stop early, skip, or summarize any part of the speech.",
       "CRITICAL RULES:",
-      "1. Transcribe 100% of the spoken audio from beginning to end into natural subtitle rows of 1 to 6 words maximum per row ('blocks').",
-      "2. For every single block, the Hebrew phrase ('he') and the English phrase ('en') MUST have the EXACT SAME number of space-separated words (1 to 6 words). If a translation naturally needs an extra word, condense it or hyphenate two words (e.g., 'gone-crazy', 'right-wing', 'know-from') so the space-separated word count matches 1-to-1.",
-      "3. Provide exact 'start' and 'end' timestamps in seconds (e.g., 0.5, 2.8) for each block matching the exact moment those words are spoken.",
-      "",
+      "1. Transcribe 100% of the spoken audio from beginning to end into natural subtitle rows of 1 to 6 words maximum per row (blocks).",
+      "2. For every single block, the Hebrew phrase (he) and the English phrase (en) MUST have the EXACT SAME number of space-separated words (1 to 6 words). If a translation naturally needs an extra word, condense it or hyphenate two words (e.g., gone-crazy, right-wing, know-from) so the space-separated word count matches 1-to-1.",
+      "3. Provide exact start and end timestamps in seconds (e.g., 0.5, 2.8) for each block matching the exact moment those words are spoken.",
       "Return ONLY a raw JSON object with this exact schema:",
-      "{",
-      '  "originalLanguage": "hebrew",',
-      '  "blocks": [',
-      '    {',
-      '      "start": 0.5,',
-      '      "end": 2.8,',
-      '      "he": "ויש להם עדות יודעים של מי?",',
-      '      "en": "They have testimony know-from whom?"',
-      '    }',
-      '  ]',
-      "}"
+      '{"originalLanguage":"hebrew","blocks":[{"start":0.5,"end":2.8,"he":"ויש להם עדות יודעים של מי?","en":"They have testimony know-from whom?"}]}'
     ].join("\n");
 
     const model = genAI.getGenerativeModel({
@@ -211,7 +199,8 @@ app.post("/transcribe", async (req, res) => {
       generationConfig: {
         responseMimeType: "application/json",
         maxOutputTokens: 65536,
-        temperature: 0.1
+        temperature: 0.1,
+        thinkingConfig: { thinkingBudget: 0 }
       }
     });
 
