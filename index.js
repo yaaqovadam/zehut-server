@@ -185,28 +185,22 @@ app.post("/transcribe", async (req, res) => {
     const audioBytes = fs.readFileSync(audioFilePath).toString("base64");
     const systemPrompt = [
       "You are a precision rhythmic subtitle-sync engine.",
-      "Listen to the audio and produce a timestamp-locked, word-count-matched bilingual transcription (Hebrew and English).",
+      "Listen to the ENTIRE audio clip from 0:00 all the way to the very last second. Do NOT stop early or summarize.",
       "",
       "CRITICAL RULES:",
-      "1. Group the speech into natural subtitle rows of 1 to 6 words maximum per row ('blocks').",
-      "2. For every single block, the Hebrew phrase ('he') and the English phrase ('en') MUST have the EXACT SAME number of space-separated words (1 to 6 words). If a translation naturally needs an extra word, condense it or hyphenate two words (e.g., 'gone-crazy', 'right-wing') so the space-separated word count matches 1-to-1.",
-      "3. Provide exact 'start' and 'end' timestamps in seconds (e.g., 0.5, 2.8) for each block and each word based on the exact moment the word is spoken in the audio.",
-      "4. Also provide the flat 'sourceArray' and 'targetArray' of every word across the entire clip where sourceArray.length === targetArray.length.",
+      "1. Transcribe 100% of the spoken audio from beginning to end into natural subtitle rows of 1 to 6 words maximum per row ('blocks').",
+      "2. For every single block, the Hebrew phrase ('he') and the English phrase ('en') MUST have the EXACT SAME number of space-separated words (1 to 6 words). If a translation naturally needs an extra word, condense it or hyphenate two words (e.g., 'gone-crazy', 'right-wing', 'know-from') so the space-separated word count matches 1-to-1.",
+      "3. Provide exact 'start' and 'end' timestamps in seconds (e.g., 0.5, 2.8) for each block matching the exact moment those words are spoken.",
       "",
       "Return ONLY a raw JSON object with this exact schema:",
       "{",
       '  "originalLanguage": "hebrew",',
-      '  "sourceArray": ["word1", "word2"],',
-      '  "targetArray": ["word1", "word2"],',
       '  "blocks": [',
       '    {',
       '      "start": 0.5,',
       '      "end": 2.8,',
       '      "he": "ויש להם עדות יודעים של מי?",',
-      '      "en": "They have testimony—know from whom?",',
-      '      "words": [',
-      '        { "he": "ויש", "en": "They", "start": 0.5, "end": 0.8 }',
-      '      ]',
+      '      "en": "They have testimony know-from whom?"',
       '    }',
       '  ]',
       "}"
@@ -214,7 +208,11 @@ app.post("/transcribe", async (req, res) => {
 
     const model = genAI.getGenerativeModel({
       model: "gemini-3.6-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: {
+        responseMimeType: "application/json",
+        maxOutputTokens: 65536,
+        temperature: 0.1
+      }
     });
 
     const result = await model.generateContent([
@@ -223,19 +221,10 @@ app.post("/transcribe", async (req, res) => {
     ]);
 
     const parsedData = JSON.parse(result.response.text());
-    const srcArr = Array.isArray(parsedData.sourceArray) ? parsedData.sourceArray : [];
-    const tgtArr = Array.isArray(parsedData.targetArray) ? parsedData.targetArray : [];
-
-    const hebrewString = parsedData.originalLanguage === "hebrew" ? srcArr.join(" ") : tgtArr.join(" ");
-    const englishString = parsedData.originalLanguage === "english" ? srcArr.join(" ") : tgtArr.join(" ");
-
     const blocks = Array.isArray(parsedData.blocks) ? parsedData.blocks : [];
-    const words = [];
-    for (const b of blocks) {
-      if (Array.isArray(b.words)) {
-        for (const w of b.words) words.push(w);
-      }
-    }
+
+    const hebrewString = blocks.map(b => (b.he || "").trim()).filter(Boolean).join(" ");
+    const englishString = blocks.map(b => (b.en || "").trim()).filter(Boolean).join(" ");
 
     if (fs.existsSync(audioFilePath)) fs.unlinkSync(audioFilePath);
     return res.json({
@@ -243,8 +232,7 @@ app.post("/transcribe", async (req, res) => {
       data: {
         he: hebrewString,
         en: englishString,
-        blocks: blocks,
-        words: words
+        blocks: blocks
       }
     });
   } catch (err) {
